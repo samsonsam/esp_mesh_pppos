@@ -22,6 +22,8 @@
  *
  */
 #include <string.h>
+#include "malloc.h"
+#include "stdlib.h"
 
 #include "esp_log.h"
 #include "lwip/err.h"
@@ -36,11 +38,13 @@
 #include "tcpip_adapter.h"
 
 #include "esp_at.h"
+#include "at_default_config.h"
 
+#ifdef CONFIG_AT_OTA_SUPPORT
 #ifdef CONFIG_AT_OTA_SSL_SUPPORT
-#include "openssl/ssl.h"
+#include "esp_tls.h"
 #endif
-#include "include/at_upgrade.h"
+#include "at_upgrade.h"
 #define TEXT_BUFFSIZE 1024
 
 #define UPGRADE_FRAME  "{\"path\": \"/v1/messages/\", \"method\": \"POST\", \"meta\": {\"Authorization\": \"token %s\"},\
@@ -72,7 +76,7 @@ static void esp_at_ota_timeout_callback( TimerHandle_t xTimer )
     }
 }
 
-bool esp_at_upgrade_process(int32_t ota_mode,uint8_t* version)
+bool esp_at_upgrade_process(esp_at_ota_mode_type ota_mode,uint8_t* version)
 {
     bool pkg_body_start = false;
     struct sockaddr_in sock_info;
@@ -83,7 +87,7 @@ bool esp_at_upgrade_process(int32_t ota_mode,uint8_t* version)
     uint8_t* pStr = NULL;
     esp_partition_t* partition_ptr = NULL;
     esp_partition_t partition;
-    esp_partition_t* next_partition = NULL;
+    const esp_partition_t* next_partition = NULL;
     esp_ota_handle_t out_handle = 0;
     int buff_len = 0;
     int sockopt = 1;
@@ -93,31 +97,30 @@ bool esp_at_upgrade_process(int32_t ota_mode,uint8_t* version)
     int result = -1;
     char* server_ip = NULL;
     uint16_t server_port = 0;
-    char* ota_key = NULL;
+    const char* ota_key = NULL;
+    uint32_t module_id = esp_at_get_module_id();
     
 #ifdef CONFIG_AT_OTA_SSL_SUPPORT
-    SSL_CTX *ctx = NULL;
-    SSL *ssl = NULL;
+    esp_tls_t *tls = NULL;
+    esp_tls_cfg_t *tls_cfg = NULL;
 #endif
 
     ESP_AT_OTA_DEBUG("ota_mode:%d\r\n",ota_mode);
     if (ota_mode == ESP_AT_OTA_MODE_NORMAL) {
         server_ip = CONFIG_AT_OTA_SERVER_IP;
         server_port = CONFIG_AT_OTA_SERVER_PORT;
-        ota_key = CONFIG_AT_OTA_TOKEN_KEY;
     }
 #ifdef CONFIG_AT_OTA_SSL_SUPPORT
     else if (ota_mode == ESP_AT_OTA_MODE_SSL) {
         server_ip = CONFIG_AT_OTA_SSL_SERVER_IP;
         server_port = CONFIG_AT_OTA_SSL_SERVER_PORT;
-        ota_key = CONFIG_AT_OTA_SSL_TOKEN_KEY;
     }
 #endif
     else {
         return ret;
     }
     
-    
+    ota_key = esp_at_get_ota_token_by_id(module_id, ota_mode);
     if (esp_at_ota_timeout_timer != NULL) {
         xTimerStop(esp_at_ota_timeout_timer,portMAX_DELAY);
         xTimerDelete(esp_at_ota_timeout_timer,portMAX_DELAY);
@@ -158,38 +161,31 @@ bool esp_at_upgrade_process(int32_t ota_mode,uint8_t* version)
     }
 
     if (version == NULL) {
-        esp_at_ota_socket_id = socket(AF_INET, SOCK_STREAM, 0);
-        if (esp_at_ota_socket_id < 0) {
-            goto OTA_ERROR;
-        }
+        if (ota_mode == ESP_AT_OTA_MODE_NORMAL) {
+            esp_at_ota_socket_id = socket(AF_INET, SOCK_STREAM, 0);
+            if (esp_at_ota_socket_id < 0) {
+                goto OTA_ERROR;
+            }
 
-        setsockopt(esp_at_ota_socket_id, SOL_SOCKET, SO_REUSEADDR,&sockopt, sizeof(sockopt));
-        // connect to http server
-        if (connect(esp_at_ota_socket_id, (struct sockaddr*)&sock_info, sizeof(sock_info)) < 0)
-        {
-            ESP_AT_OTA_DEBUG("connect to server failed!\r\n");
-            goto OTA_ERROR;
+            setsockopt(esp_at_ota_socket_id, SOL_SOCKET, SO_REUSEADDR,&sockopt, sizeof(sockopt));
+            // connect to http server
+            if (connect(esp_at_ota_socket_id, (struct sockaddr*)&sock_info, sizeof(sock_info)) < 0)
+            {
+                ESP_AT_OTA_DEBUG("connect to server failed!\r\n");
+                goto OTA_ERROR;
+            }
         }
-
     #ifdef CONFIG_AT_OTA_SSL_SUPPORT
-        if (ota_mode == ESP_AT_OTA_MODE_SSL) {
-            ctx = SSL_CTX_new(TLSv1_2_client_method());
-            if (!ctx) {
-                ESP_AT_OTA_DEBUG("ctx fail\r\n");
-                goto OTA_ERROR;
-            }
-            ssl = SSL_new(ctx);
-            SSL_CTX_free(ctx);
-            ctx = NULL;
-            if (!ssl) {
-                ESP_AT_OTA_DEBUG("ssl fail\r\n");
+        else if (ota_mode == ESP_AT_OTA_MODE_SSL) {
+            tls = esp_tls_init();
+
+            tls_cfg = (esp_tls_cfg_t *)calloc(1, sizeof(esp_tls_cfg_t));
+            if (tls_cfg == NULL) {
                 goto OTA_ERROR;
             }
 
-            SSL_set_fd(ssl, esp_at_ota_socket_id);
-
-            if(!SSL_connect(ssl)) {
-                ESP_AT_OTA_DEBUG("ssl connect fail\r\n");
+            if (esp_tls_conn_new_sync(server_ip, strlen(server_ip), server_port, tls_cfg, tls) < 0) {
+                ESP_AT_OTA_DEBUG("Failed to open a new connection\r\n");
                 goto OTA_ERROR;
             }
         }
@@ -209,7 +205,7 @@ bool esp_at_upgrade_process(int32_t ota_mode,uint8_t* version)
         }
     #ifdef CONFIG_AT_OTA_SSL_SUPPORT
         else if (ota_mode == ESP_AT_OTA_MODE_SSL) {
-            result = SSL_write(ssl,http_request, strlen((char*)http_request));
+            result = esp_tls_conn_write(tls, (const unsigned char *)http_request, strlen((char *)http_request));
         }
     #endif
 
@@ -227,14 +223,10 @@ bool esp_at_upgrade_process(int32_t ota_mode,uint8_t* version)
         }
     #ifdef CONFIG_AT_OTA_SSL_SUPPORT
         else if (ota_mode == ESP_AT_OTA_MODE_SSL) {
-            result = SSL_read(ssl,data_buffer, TEXT_BUFFSIZE);
+            result = esp_tls_conn_read(tls, data_buffer, TEXT_BUFFSIZE);
         }
-
-        if (ssl != NULL) {
-            SSL_shutdown(ssl);
-            SSL_free(ssl);
-            ssl = NULL;
-        }
+        esp_tls_conn_delete(tls);
+        tls = NULL;
     #endif
         close(esp_at_ota_socket_id);
         esp_at_ota_socket_id = -1;
@@ -304,48 +296,33 @@ bool esp_at_upgrade_process(int32_t ota_mode,uint8_t* version)
         goto OTA_ERROR;
     }
 
-    esp_at_ota_socket_id = socket(AF_INET, SOCK_STREAM, 0);
-    if (esp_at_ota_socket_id < 0) {
-       goto OTA_ERROR;
-    }
-    setsockopt(esp_at_ota_socket_id, SOL_SOCKET, SO_REUSEADDR,&sockopt, sizeof(sockopt));
-    if (connect(esp_at_ota_socket_id, (struct sockaddr*)&sock_info, sizeof(sock_info)) < 0) {
-        ESP_AT_OTA_DEBUG("connect to server2 failed!\r\n");
-        goto OTA_ERROR;
+    if (ota_mode == ESP_AT_OTA_MODE_NORMAL) {
+        esp_at_ota_socket_id = socket(AF_INET, SOCK_STREAM, 0);
+        if (esp_at_ota_socket_id < 0) {
+            goto OTA_ERROR;
+        }
+        setsockopt(esp_at_ota_socket_id, SOL_SOCKET, SO_REUSEADDR,&sockopt, sizeof(sockopt));
+        if (connect(esp_at_ota_socket_id, (struct sockaddr*)&sock_info, sizeof(sock_info)) < 0) {
+            ESP_AT_OTA_DEBUG("connect to server2 failed!\r\n");
+            goto OTA_ERROR;
+        }
     }
 #ifdef CONFIG_AT_OTA_SSL_SUPPORT
-    if (ota_mode == ESP_AT_OTA_MODE_SSL) {
-        ctx = SSL_CTX_new(TLSv1_1_client_method());
-        if (!ctx) {
-            ESP_AT_OTA_DEBUG("ctx fail\r\n");
-            goto OTA_ERROR;
-        }
-        ssl = SSL_new(ctx);
-        SSL_CTX_free(ctx);
-        ctx = NULL;
-        if (!ssl) {
-            ESP_AT_OTA_DEBUG("ssl fail\r\n");
-            goto OTA_ERROR;
-        }
-
-        SSL_set_fd(ssl, esp_at_ota_socket_id);
-
-        if(!SSL_connect(ssl)) {
-            ESP_AT_OTA_DEBUG("ssl connect fail\r\n");
+    else if (ota_mode == ESP_AT_OTA_MODE_SSL) {
+        tls = esp_tls_init();
+        if (esp_tls_conn_new_sync(server_ip, strlen(server_ip), server_port, tls_cfg, tls) < 0) {
+            ESP_AT_OTA_DEBUG("Failed to open a new connection\r\n");
             goto OTA_ERROR;
         }
     }
 #endif
-
-
-    
     result = -1;
     if (ota_mode == ESP_AT_OTA_MODE_NORMAL) {
         result = write(esp_at_ota_socket_id, http_request, strlen((char*)http_request));
     }
 #ifdef CONFIG_AT_OTA_SSL_SUPPORT
     else if (ota_mode == ESP_AT_OTA_MODE_SSL) {
-        result = SSL_write(ssl,http_request, strlen((char*)http_request));
+        result = esp_tls_conn_write(tls, (const unsigned char *)http_request, strlen((char *)http_request));
     }
 #endif
 
@@ -365,7 +342,7 @@ bool esp_at_upgrade_process(int32_t ota_mode,uint8_t* version)
         }
 #ifdef CONFIG_AT_OTA_SSL_SUPPORT
         else if (ota_mode == ESP_AT_OTA_MODE_SSL) {
-            buff_len = SSL_read(ssl,data_buffer, TEXT_BUFFSIZE);
+            buff_len = esp_tls_conn_read(tls, data_buffer, TEXT_BUFFSIZE);
         }
 #endif
         if (buff_len < 0) {
@@ -456,12 +433,13 @@ OTA_ERROR:
     }
     
 #ifdef CONFIG_AT_OTA_SSL_SUPPORT
-    if (ssl != NULL) {
-        SSL_shutdown(ssl);
-        SSL_free(ssl);
-        ssl = NULL;
+    if (tls_cfg) {
+        free(tls_cfg);
     }
+
+    esp_tls_conn_delete(tls);
+    tls = NULL;
 #endif
     return ret;
 }
-
+#endif

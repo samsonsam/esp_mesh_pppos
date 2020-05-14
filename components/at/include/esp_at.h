@@ -27,6 +27,8 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "esp_partition.h"
+#include "esp_wifi.h"
 
 /**
  * @brief esp_at_cmd_struct
@@ -87,7 +89,11 @@ typedef struct {
     void (*pre_restart_callback) (void);
 } esp_at_custom_ops_struct;
 
-
+/**
+ * @AT specific callback type
+ *
+ */
+typedef void (*esp_at_port_specific_callback_t) (void);
 // error number
 /**
  * @brief module number,Now just AT module
@@ -202,7 +208,7 @@ esp_at_para_parse_result_type esp_at_get_para_as_str(int32_t para_index, uint8_t
  * @param len data length
  *
  */
-void IRAM_ATTR esp_at_port_recv_data_notify_from_isr(int32_t len);
+void esp_at_port_recv_data_notify_from_isr(int32_t len);
 
 /**
  * @brief Calling the esp_at_port_recv_data_notify to notify at module that at port received data.
@@ -237,7 +243,7 @@ void esp_at_transmit_terminal(void);
  * @param cmd_num command number
  *
  */
-bool esp_at_custom_cmd_array_regist(esp_at_cmd_struct *custom_at_cmd_array, uint32_t cmd_num);
+bool esp_at_custom_cmd_array_regist(const esp_at_cmd_struct *custom_at_cmd_array, uint32_t cmd_num);
 
 /**
  * @brief regist device operate functions set,
@@ -346,6 +352,48 @@ bool esp_at_wifi_cmd_regist(void);
  */
 bool esp_at_net_cmd_regist(void);
 /**
+ * @brief regist at mdns command set. If not,you can not use AT mdns command
+ * @param NONE
+ *
+ */
+
+bool esp_at_mdns_cmd_regist(void);
+
+/**
+ * @brief regist at wps command set. If not,you can not use AT wps command
+ * @param NONE
+ *
+ */
+bool esp_at_wps_cmd_regist(void);
+
+/**
+ * @brief regist at smartconfig command set. If not,you can not use AT smartconfig command
+ * @param NONE
+ *
+ */
+bool esp_at_smartconfig_cmd_regist(void);
+
+/**
+ * @brief regist at ping command set. If not,you can not use AT ping command
+ * @param NONE
+ *
+ */
+bool esp_at_ping_cmd_regist(void);
+
+/**
+ * @brief regist at http command set. If not,you can not use AT http command
+ * @param NONE
+ *
+ */
+bool esp_at_http_cmd_regist(void);
+
+/**
+ * @brief regist at mqtt command set. If not,you can not use AT mqtt command
+ * @param NONE
+ *
+ */
+bool esp_at_mqtt_cmd_regist(void);
+/**
  * @brief regist at ble command set. If not,you can not use AT ble command
  * @param NONE
  *
@@ -353,11 +401,39 @@ bool esp_at_net_cmd_regist(void);
 bool esp_at_ble_cmd_regist(void);
 
 /**
+ * @brief regist at ble hid command set. If not,you can not use AT ble hid command
+ * @param NONE
+ *
+ */
+bool esp_at_ble_hid_cmd_regist(void);
+
+/**
+ * @brief regist at blufi command set. If not,you can not use AT blufi command
+ * @param NONE
+ *
+ */
+bool esp_at_blufi_cmd_regist(void);
+
+/**
 * @brief regist at bt command set. If not,you can not use AT bt command
 * @param NONE
 *
 */
 bool esp_at_bt_cmd_regist(void);
+
+/**
+* @brief regist at bt spp command set. If not,you can not use AT bt spp command
+* @param NONE
+*
+*/
+bool esp_at_bt_spp_cmd_regist(void);
+
+/**
+* @brief regist at bt a2dp command set. If not,you can not use AT bt a2dp command
+* @param NONE
+*
+*/
+bool esp_at_bt_a2dp_cmd_regist(void);
 
 /**
  * @brief regist at fs command set. If not,you can not use AT fs command
@@ -400,10 +476,66 @@ bool esp_at_custom_cmd_line_terminator_set(uint8_t* terminator);
 uint8_t* esp_at_custom_cmd_line_terminator_get(void);
 
 /**
+ * @brief Find the partition which is defined in at_customize.csv
+ * @param type the type of the partition
+ *        subtype the subtype of the partition
+ *        label Partition label
+ * 
+ * @return pointer to esp_partition_t structure, or NULL if no partition is found.
+ *         This pointer is valid for the lifetime of the application
+ */
+const esp_partition_t* esp_at_custom_partition_find(esp_partition_type_t type, esp_partition_subtype_t subtype, const char* label);
+
+/**
  * @brief regist at ethernet command set. If not,you can not use AT ethernet command
  * @param NONE
  *
  */
 bool esp_at_eth_cmd_regist(void);
-#endif
 
+/**
+ * @brief Set AT core as specific status, it will call callback if receiving data.
+ * for example:
+ *
+ * 
+    static void wait_data_callback (void)
+    {
+        xSemaphoreGive(sync_sema);
+    }
+
+    void process_task(void* para)
+    {
+      vSemaphoreCreateBinary(sync_sema);
+      xSemaphoreTake(sync_sema,portMAX_DELAY);
+      esp_at_port_write_data((uint8_t *)">",strlen(">"));
+      esp_at_port_enter_specific(wait_data_callback);
+      while(xSemaphoreTake(sync_sema,portMAX_DELAY)) {
+          len = esp_at_port_read_data(data, data_len);
+          // TODO:
+      }
+    }
+ * @param callback
+ *
+ */
+void esp_at_port_enter_specific(esp_at_port_specific_callback_t callback);
+
+/**
+ * @brief Exit AT core as specific status.
+ * @param NONE
+ *
+ */
+void esp_at_port_exit_specific(void);
+
+/**
+ * @brief Get current AT command name.
+ * @param NONE
+ */
+const uint8_t* esp_at_get_current_cmd_name(void);
+
+/**
+ * @brief  Wi-Fi event handler callback, which used in AT core.
+ * @param NONE
+ */
+esp_err_t esp_at_wifi_event_handler(void *ctx, system_event_t *event);
+
+#endif
