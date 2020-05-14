@@ -3,3 +3,8 @@ sdkconfig
 sdkconfig.old
 cmake-build-debug/
 venv/
+cmake-build-esp32-idf/
+
+.idea/
+
+.DS_Store

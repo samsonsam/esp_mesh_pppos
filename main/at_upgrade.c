@@ -40,7 +40,7 @@
 #ifdef CONFIG_AT_OTA_SSL_SUPPORT
 #include "openssl/ssl.h"
 #endif
-#include "at_upgrade.h"
+#include "include/at_upgrade.h"
 #define TEXT_BUFFSIZE 1024
 
 #define UPGRADE_FRAME  "{\"path\": \"/v1/messages/\", \"method\": \"POST\", \"meta\": {\"Authorization\": \"token %s\"},\

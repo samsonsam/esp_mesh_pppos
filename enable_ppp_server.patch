@@ -1,0 +1,30 @@
+From ff3a28ddb19aae2eb40ff489f4807690f8424ecc Mon Sep 17 00:00:00 2001
+From: Samuel Erb <samuel.erb@gmx.com>
+Date: Thu, 14 May 2020 13:20:47 +0200
+Subject: [PATCH] added PPP_SERVER in Kconfig
+
+---
+ components/lwip/Kconfig | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/components/lwip/Kconfig b/components/lwip/Kconfig
+index ffd34c995..09056ee4e 100644
+--- a/components/lwip/Kconfig
++++ b/components/lwip/Kconfig
+@@ -560,6 +560,13 @@ menu "LWIP"
+ 
+             PPP over serial support is experimental and unsupported.
+ 
++    config PPP_SERVER
++        bool "Enable PPP server support (new/experimental)"
++        depends on PPP_SUPPORT
++        default n
++        help
++            Enable PPP server. Only PPP server over serial is possible.
++
+     config LWIP_PPP_ENABLE_IPV6
+         bool "Enable IPV6 support for PPP connections (IPV6CP)"
+         depends on LWIP_PPP_SUPPORT
+-- 
+2.24.2 (Apple Git-127)
+

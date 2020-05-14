@@ -24,12 +24,12 @@ factory_bin: build/download.config
 
 patch: build/patch.out
 
-build/patch.out: pppd-idf.patch pppd-lwip.patch
-	cd esp-idf; git apply -v ../pppd-idf.patch
-	cd esp-idf/components/lwip/lwip; git apply -v ../../../../pppd-lwip.patch
+build/patch.out: enable_ppp_server.patch #pppd-lwip.patch
+	cd esp-idf; git apply -v ../enable_ppp_server.patch
+	#cd esp-idf/components/lwip/lwip; git apply -v ../../../../pppd-lwip.patch
 	touch build/patch.out
 
 unpatch:
-	cd esp-idf; git apply -R -v ../pppd-idf.patch
-	cd esp-idf/components/lwip/lwip; git apply -R -v ../../../../pppd-lwip.patch
+	cd esp-idf; git apply -R -v ../enable_ppp_server.patch
+	#cd esp-idf/components/lwip/lwip; git apply -R -v ../../../../pppd-lwip.patch
 	rm -f build/patch.out
